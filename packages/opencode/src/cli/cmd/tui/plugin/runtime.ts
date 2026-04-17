@@ -89,19 +89,54 @@ const EMPTY_TUI: TuiPluginModule = {
 function fail(message: string, data: Record<string, unknown>) {
   if (!("error" in data)) {
     log.error(message, data)
-    console.error(`[tui.plugin] ${message}`, data)
     return
   }
 
   const text = `${message}: ${errorMessage(data.error)}`
   const next = { ...data, error: errorData(data.error) }
   log.error(text, next)
-  console.error(`[tui.plugin] ${text}`, next)
 }
 
 function warn(message: string, data: Record<string, unknown>) {
   log.warn(message, data)
-  console.warn(`[tui.plugin] ${message}`, data)
+}
+
+async function withStartupOutputCaptured<T>(fn: () => Promise<T>) {
+  const stdout = process.stdout.write.bind(process.stdout)
+  const stderr = process.stderr.write.bind(process.stderr)
+  const consoleInfo = console.info.bind(console)
+  const consoleLog = console.log.bind(console)
+  const consoleWarn = console.warn.bind(console)
+  const consoleError = console.error.bind(console)
+  const sink = (stream: "stdout" | "stderr", chunk: unknown) => {
+    const text = String(chunk).trim()
+    if (!text) return
+    log.warn("suppressed tui startup output", { stream, text })
+  }
+
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    sink("stdout", chunk)
+    return true
+  }) as typeof process.stdout.write
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    sink("stderr", chunk)
+    return true
+  }) as typeof process.stderr.write
+  console.info = (...args) => sink("stdout", args.join(" "))
+  console.log = (...args) => sink("stdout", args.join(" "))
+  console.warn = (...args) => sink("stderr", args.join(" "))
+  console.error = (...args) => sink("stderr", args.join(" "))
+
+  try {
+    return await fn()
+  } finally {
+    process.stdout.write = stdout
+    process.stderr.write = stderr
+    console.info = consoleInfo
+    console.log = consoleLog
+    console.warn = consoleWarn
+    console.error = consoleError
+  }
 }
 
 type CleanupResult = { type: "ok" } | { type: "error"; error: unknown } | { type: "timeout" }
@@ -986,42 +1021,44 @@ async function load(input: { api: Api; config: TuiConfig.Info }) {
   }
   runtime = next
   try {
-    await Instance.provide({
-      directory: cwd,
-      fn: async () => {
-        const records = Flag.OPENCODE_PURE ? [] : (config.plugin_origins ?? [])
-        if (Flag.OPENCODE_PURE && config.plugin_origins?.length) {
-          log.info("skipping external tui plugins in pure mode", { count: config.plugin_origins.length })
-        }
+    await withStartupOutputCaptured(() =>
+      Instance.provide({
+        directory: cwd,
+        fn: async () => {
+          const records = Flag.OPENCODE_PURE ? [] : (config.plugin_origins ?? [])
+          if (Flag.OPENCODE_PURE && config.plugin_origins?.length) {
+            log.info("skipping external tui plugins in pure mode", { count: config.plugin_origins.length })
+          }
 
-        for (const item of INTERNAL_TUI_PLUGINS) {
-          log.info("loading internal tui plugin", { id: item.id })
-          const entry = loadInternalPlugin(item)
-          const meta = createMeta(entry.source, entry.spec, entry.target, undefined, entry.id)
-          addPluginEntry(next, {
-            id: entry.id,
-            load: entry,
-            meta,
-            themes: {},
-            plugin: entry.module.tui,
-            enabled: true,
-          })
-        }
+          for (const item of INTERNAL_TUI_PLUGINS) {
+            log.info("loading internal tui plugin", { id: item.id })
+            const entry = loadInternalPlugin(item)
+            const meta = createMeta(entry.source, entry.spec, entry.target, undefined, entry.id)
+            addPluginEntry(next, {
+              id: entry.id,
+              load: entry,
+              meta,
+              themes: {},
+              plugin: entry.module.tui,
+              enabled: true,
+            })
+          }
 
-        const ready = await resolveExternalPlugins(records, () => TuiConfig.waitForDependencies())
-        await addExternalPluginEntries(next, ready)
+          const ready = await resolveExternalPlugins(records, () => TuiConfig.waitForDependencies())
+          await addExternalPluginEntries(next, ready)
 
-        applyInitialPluginEnabledState(next, config)
-        for (const plugin of next.plugins) {
-          if (!plugin.enabled) continue
-          // Keep plugin execution sequential for deterministic side effects:
-          // command registration order affects keybind/command precedence,
-          // route registration is last-wins when ids collide,
-          // and hook chains rely on stable plugin ordering.
-          await activatePluginEntry(next, plugin, false)
-        }
-      },
-    })
+          applyInitialPluginEnabledState(next, config)
+          for (const plugin of next.plugins) {
+            if (!plugin.enabled) continue
+            // Keep plugin execution sequential for deterministic side effects:
+            // command registration order affects keybind/command precedence,
+            // route registration is last-wins when ids collide,
+            // and hook chains rely on stable plugin ordering.
+            await activatePluginEntry(next, plugin, false)
+          }
+        },
+      }),
+    )
   } catch (error) {
     fail("failed to load tui plugins", { directory: cwd, error })
   }

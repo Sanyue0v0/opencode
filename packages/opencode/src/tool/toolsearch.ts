@@ -1,6 +1,6 @@
 import z from "zod"
 import { Effect } from "effect"
-import { Tool } from "./tool"
+import * as Tool from "./tool"
 
 const parameters = z.object({
   query: z

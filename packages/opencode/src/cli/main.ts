@@ -37,6 +37,9 @@ import { errorMessage } from "../util/error"
 import { PluginCommand } from "./cmd/plug"
 import { Heap } from "./heap"
 import { drizzle } from "drizzle-orm/bun-sqlite"
+import { ensureProcessMetadata } from "../util/opencode-process"
+
+const processMetadata = ensureProcessMetadata("main")
 
 function show(out: string) {
   const text = out.trimStart()
@@ -106,6 +109,8 @@ export async function runCLI(args: string[]) {
       Log.Default.info("opencode", {
         version: InstallationVersion,
         args: process.argv.slice(2),
+        process_role: processMetadata.processRole,
+        run_id: processMetadata.runID,
       })
 
       const marker = path.join(Global.Path.data, "opencode.db")

@@ -1,11 +1,8 @@
 import type { TuiPluginApi, TuiSlotContext, TuiSlotMap, TuiSlotProps } from "@opencode-ai/plugin/tui"
 import { createSlot, createSolidSlotRegistry, type JSX, type SolidPlugin } from "@opentui/solid"
-import { Log } from "@/util"
 import { isRecord } from "@/util/record"
 
 type RuntimeSlotMap = TuiSlotMap<Record<string, object>>
-
-const log = Log.create({ service: "tui.slot" })
 
 type Slot = <Name extends string>(props: TuiSlotProps<Name>) => JSX.Element | null
 export type HostSlotPlugin<Slots extends Record<string, object> = {}> = SolidPlugin<TuiSlotMap<Slots>, TuiSlotContext>
@@ -41,7 +38,7 @@ export function setupSlots(api: HostPluginApi): HostSlots {
     },
     {
       onPluginError(event) {
-        log.error("plugin error", {
+        console.error("[tui.slot] plugin error", {
           plugin: event.pluginId,
           slot: event.slot,
           phase: event.phase,

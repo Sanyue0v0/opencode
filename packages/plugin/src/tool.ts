@@ -33,6 +33,10 @@ export function tool<Args extends z.ZodRawShape>(input: {
   description: string
   args: Args
   execute(args: z.infer<z.ZodObject<Args>>, context: ToolContext): Promise<ToolResult>
+  providerOptions?: Record<string, any>
+  shouldDefer?: boolean
+  alwaysLoad?: boolean
+  searchHint?: string
 }) {
   return input
 }

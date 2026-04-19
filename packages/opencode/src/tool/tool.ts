@@ -38,6 +38,10 @@ export interface Def<Parameters extends z.ZodType = z.ZodType, M extends Metadat
   parameters: Parameters
   execute(args: z.infer<Parameters>, ctx: Context): Effect.Effect<ExecuteResult<M>>
   formatValidationError?(error: z.ZodError): string
+  providerOptions?: Record<string, any>
+  shouldDefer?: boolean
+  alwaysLoad?: boolean
+  searchHint?: string
 }
 export type DefWithoutID<Parameters extends z.ZodType = z.ZodType, M extends Metadata = Metadata> = Omit<
   Def<Parameters, M>,
@@ -47,6 +51,10 @@ export type DefWithoutID<Parameters extends z.ZodType = z.ZodType, M extends Met
 export interface Info<Parameters extends z.ZodType = z.ZodType, M extends Metadata = Metadata> {
   id: string
   init: () => Effect.Effect<DefWithoutID<Parameters, M>>
+  providerOptions?: Record<string, any>
+  shouldDefer?: boolean
+  alwaysLoad?: boolean
+  searchHint?: string
 }
 
 type Init<Parameters extends z.ZodType, M extends Metadata> =
@@ -125,7 +133,20 @@ export function define<Parameters extends z.ZodType, Result extends Metadata, R,
       const resolved = yield* init
       const truncate = yield* Truncate.Service
       const agents = yield* Agent.Service
-      return { id, init: wrap(id, resolved, truncate, agents) }
+      const metadata =
+        typeof resolved === "function"
+          ? {}
+          : {
+              providerOptions: resolved.providerOptions,
+              shouldDefer: resolved.shouldDefer,
+              alwaysLoad: resolved.alwaysLoad,
+              searchHint: resolved.searchHint,
+            }
+      return {
+        id,
+        init: wrap(id, resolved, truncate, agents),
+        ...metadata,
+      }
     }),
     { id },
   )

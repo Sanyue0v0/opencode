@@ -56,4 +56,31 @@ describe("Tool.define", () => {
 
     expect(first).not.toBe(second)
   })
+
+  test("tool deferred metadata survives Tool.define and init", async () => {
+    const info = await runtime.runPromise(
+      Tool.define(
+        "test-deferred",
+        Effect.succeed({
+          ...makeTool("test"),
+          providerOptions: { anthropic: { deferLoading: true } },
+          shouldDefer: true,
+          alwaysLoad: false,
+          searchHint: "search deferred test tool",
+        }),
+      ),
+    )
+
+    expect(info.providerOptions).toEqual({ anthropic: { deferLoading: true } })
+    expect(info.shouldDefer).toBe(true)
+    expect(info.alwaysLoad).toBe(false)
+    expect(info.searchHint).toBe("search deferred test tool")
+
+    const def = await Effect.runPromise(info.init())
+
+    expect(def.providerOptions).toEqual({ anthropic: { deferLoading: true } })
+    expect(def.shouldDefer).toBe(true)
+    expect(def.alwaysLoad).toBe(false)
+    expect(def.searchHint).toBe("search deferred test tool")
+  })
 })

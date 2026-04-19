@@ -235,6 +235,38 @@ test(
   ),
 )
 
+test(
+  "MCP tools expose deferred-loading metadata from config",
+  withInstance(
+    {
+      "meta-server": {
+        type: "local",
+        command: ["echo", "test"],
+        shouldDefer: true,
+        alwaysLoad: true,
+        searchHint: "meta hint",
+      },
+    },
+    (mcp) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "meta-server"
+        const serverState = getOrCreateClientState("meta-server")
+        serverState.tools = [
+          { name: "meta_tool", description: "A meta tool", inputSchema: { type: "object", properties: {} } },
+        ]
+
+        yield* mcp.connect("meta-server")
+        const tools = yield* mcp.tools()
+        const tool = tools["meta-server_meta_tool"] as any
+
+        expect(tool).toBeDefined()
+        expect(tool.alwaysLoad).toBe(true)
+        expect(tool.shouldDefer).toBe(false)
+        expect(tool.searchHint).toBe("meta hint")
+      }),
+  ),
+)
+
 // ========================================================================
 // Test: tool change notifications refresh the cache
 // ========================================================================

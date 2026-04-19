@@ -29,6 +29,7 @@ export interface ExecuteResult<M extends Metadata = Metadata> {
   title: string
   metadata: M
   output: string
+  content?: MessageV2.ToolReferenceContent[]
   attachments?: Omit<MessageV2.FilePart, "id" | "sessionID" | "messageID">[]
 }
 

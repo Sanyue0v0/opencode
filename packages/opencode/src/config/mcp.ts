@@ -10,6 +10,15 @@ export class Local extends Schema.Class<Local>("McpLocalConfig")({
   environment: Schema.optional(Schema.Record(Schema.String, Schema.String)).annotate({
     description: "Environment variables to set when running the MCP server",
   }),
+  shouldDefer: Schema.optional(Schema.Boolean).annotate({
+    description: "Whether tools from this MCP server should be deferred behind toolsearch. Defaults to true.",
+  }),
+  alwaysLoad: Schema.optional(Schema.Boolean).annotate({
+    description: "Force tools from this MCP server to always load in the initial prompt.",
+  }),
+  searchHint: Schema.optional(Schema.String).annotate({
+    description: "Short capability hint used by toolsearch when matching deferred MCP tools.",
+  }),
   enabled: Schema.optional(Schema.Boolean).annotate({
     description: "Enable or disable the MCP server on startup",
   }),
@@ -38,6 +47,15 @@ export class OAuth extends Schema.Class<OAuth>("McpOAuthConfig")({
 export class Remote extends Schema.Class<Remote>("McpRemoteConfig")({
   type: Schema.Literal("remote").annotate({ description: "Type of MCP server connection" }),
   url: Schema.String.annotate({ description: "URL of the remote MCP server" }),
+  shouldDefer: Schema.optional(Schema.Boolean).annotate({
+    description: "Whether tools from this MCP server should be deferred behind toolsearch. Defaults to true.",
+  }),
+  alwaysLoad: Schema.optional(Schema.Boolean).annotate({
+    description: "Force tools from this MCP server to always load in the initial prompt.",
+  }),
+  searchHint: Schema.optional(Schema.String).annotate({
+    description: "Short capability hint used by toolsearch when matching deferred MCP tools.",
+  }),
   enabled: Schema.optional(Schema.Boolean).annotate({
     description: "Enable or disable the MCP server on startup",
   }),

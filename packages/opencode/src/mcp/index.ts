@@ -129,8 +129,21 @@ function isMcpConfigured(entry: McpEntry): entry is ConfigMCP.Info {
 
 const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, "_")
 
-// Convert MCP tool definition to AI SDK Tool type
-function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number): Tool {
+// Convert MCP tool definition to AI SDK Tool type with deferred-loading metadata
+function convertMcpTool(
+  mcpTool: MCPToolDef,
+  client: MCPClient,
+  timeout?: number,
+  metadata?: {
+    shouldDefer?: boolean
+    alwaysLoad?: boolean
+    searchHint?: string
+  },
+): Tool & {
+  shouldDefer?: boolean
+  alwaysLoad?: boolean
+  searchHint?: string
+} {
   const inputSchema = mcpTool.inputSchema
 
   // Spread first, then override type to ensure it's always "object"
@@ -141,23 +154,37 @@ function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number
     additionalProperties: false,
   }
 
-  return dynamicTool({
-    description: mcpTool.description ?? "",
-    inputSchema: jsonSchema(schema),
-    execute: async (args: unknown) => {
-      return client.callTool(
-        {
-          name: mcpTool.name,
-          arguments: (args || {}) as Record<string, unknown>,
-        },
-        CallToolResultSchema,
-        {
-          resetTimeoutOnProgress: true,
-          timeout,
-        },
-      )
+  return Object.assign(
+    dynamicTool({
+      description: mcpTool.description ?? "",
+      inputSchema: jsonSchema(schema),
+      execute: async (args: unknown) => {
+        return client.callTool(
+          {
+            name: mcpTool.name,
+            arguments: (args || {}) as Record<string, unknown>,
+          },
+          CallToolResultSchema,
+          {
+            resetTimeoutOnProgress: true,
+            timeout,
+          },
+        )
+      },
+    }),
+    {
+      alwaysLoad:
+        metadata?.alwaysLoad === true || mcpTool._meta?.["anthropic/alwaysLoad"] === true,
+      shouldDefer:
+        metadata?.alwaysLoad === true || mcpTool._meta?.["anthropic/alwaysLoad"] === true
+          ? false
+          : metadata?.shouldDefer ?? true,
+      searchHint:
+        (typeof mcpTool._meta?.["anthropic/searchHint"] === "string"
+          ? mcpTool._meta["anthropic/searchHint"]
+          : undefined) ?? metadata?.searchHint,
     },
-  })
+  )
 }
 
 function defs(key: string, client: MCPClient, timeout?: number) {
@@ -221,7 +248,7 @@ interface State {
 export interface Interface {
   readonly status: () => Effect.Effect<Record<string, Status>>
   readonly clients: () => Effect.Effect<Record<string, MCPClient>>
-  readonly tools: () => Effect.Effect<Record<string, Tool>>
+  readonly tools: () => Effect.Effect<Record<string, Tool & { shouldDefer?: boolean; alwaysLoad?: boolean; searchHint?: string }>>
   readonly prompts: () => Effect.Effect<Record<string, PromptInfo & { client: string }>>
   readonly resources: () => Effect.Effect<Record<string, ResourceInfo & { client: string }>>
   readonly add: (name: string, mcp: ConfigMCP.Info) => Effect.Effect<{ status: Record<string, Status> | Status }>
@@ -631,7 +658,7 @@ export const layer = Layer.effect(
     })
 
     const tools = Effect.fn("MCP.tools")(function* () {
-      const result: Record<string, Tool> = {}
+      const result: Record<string, Tool & { shouldDefer?: boolean; alwaysLoad?: boolean; searchHint?: string }> = {}
       const s = yield* InstanceState.get(state)
 
       const cfg = yield* cfgSvc.get()
@@ -657,7 +684,11 @@ export const layer = Layer.effect(
 
             const timeout = entry?.timeout ?? defaultTimeout
             for (const mcpTool of listed) {
-              result[sanitize(clientName) + "_" + sanitize(mcpTool.name)] = convertMcpTool(mcpTool, client, timeout)
+              result[sanitize(clientName) + "_" + sanitize(mcpTool.name)] = convertMcpTool(mcpTool, client, timeout, {
+                shouldDefer: entry?.shouldDefer,
+                alwaysLoad: entry?.alwaysLoad,
+                searchHint: entry?.searchHint,
+              })
             }
           }),
         { concurrency: "unbounded" },

@@ -128,6 +128,10 @@ export const layer: Layer.Layer<
             id,
             parameters: z.object(def.args),
             description: def.description,
+            providerOptions: def.providerOptions,
+            shouldDefer: def.shouldDefer,
+            alwaysLoad: def.alwaysLoad,
+            searchHint: def.searchHint,
             execute: (args, toolCtx) =>
               Effect.gen(function* () {
                 const pluginCtx: PluginToolContext = {
@@ -295,6 +299,10 @@ export const layer: Layer.Layer<
           const output = {
             description: tool.description,
             parameters: tool.parameters,
+            providerOptions: tool.providerOptions,
+            shouldDefer: tool.shouldDefer,
+            alwaysLoad: tool.alwaysLoad,
+            searchHint: tool.searchHint,
           }
           yield* plugin.trigger("tool.definition", { toolID: tool.id }, output)
           return {
@@ -307,8 +315,12 @@ export const layer: Layer.Layer<
               .filter(Boolean)
               .join("\n"),
             parameters: output.parameters,
+            providerOptions: output.providerOptions,
             execute: tool.execute,
             formatValidationError: tool.formatValidationError,
+            shouldDefer: output.shouldDefer,
+            alwaysLoad: output.alwaysLoad,
+            searchHint: output.searchHint,
             source: builtinIds.has(tool.id) ? ("builtin" as const) : ("custom" as const),
           }
         }),

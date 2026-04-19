@@ -1,6 +1,7 @@
 import z from "zod"
 import { Effect } from "effect"
 import * as Tool from "./tool"
+import type { MessageV2 } from "../session/message-v2"
 
 const parameters = z.object({
   query: z
@@ -31,9 +32,23 @@ Query forms:
 export type DeferredToolEntry = {
   description: string
   parameters: unknown
+  searchHint?: string
 }
 
 export const TOOLSEARCH_EXTRA_KEY = "deferredTools"
+
+function isAnthropicModel(model: unknown) {
+  if (!model || typeof model !== "object") return false
+  const npm = (model as { api?: { npm?: unknown } }).api?.npm
+  return npm === "@ai-sdk/anthropic" || npm === "@ai-sdk/google-vertex/anthropic"
+}
+
+function toolReferences(matches: string[]): MessageV2.ToolReferenceContent[] {
+  return matches.map((toolName) => ({
+    type: "tool_reference",
+    toolName,
+  }))
+}
 
 function parseToolName(name: string) {
   if (name.startsWith("mcp__")) {
@@ -84,6 +99,8 @@ export const ToolSearchTool = Tool.define<typeof parameters, Metadata, never>(
   Effect.succeed({
     description: DESCRIPTION,
     parameters,
+    alwaysLoad: true,
+    searchHint: "load deferred tool schemas",
     execute: (input: z.infer<typeof parameters>, ctx: Tool.Context<Metadata>) =>
       Effect.gen(function* () {
         const max = input.max_results ?? 5
@@ -115,6 +132,7 @@ export const ToolSearchTool = Tool.define<typeof parameters, Metadata, never>(
             title: `toolsearch: select → ${found.length}`,
             output: renderFunctions(found, deferred),
             metadata: { query: input.query, matches: found, total_deferred: totalDeferred },
+            ...(isAnthropicModel(ctx.extra?.model) && found.length > 0 ? { content: toolReferences(found) } : {}),
           }
         }
 
@@ -129,6 +147,7 @@ export const ToolSearchTool = Tool.define<typeof parameters, Metadata, never>(
             title: `toolsearch: exact → 1`,
             output: renderFunctions([exact], deferred),
             metadata: { query: input.query, matches: [exact], total_deferred: totalDeferred },
+            ...(isAnthropicModel(ctx.extra?.model) ? { content: toolReferences([exact]) } : {}),
           }
         }
 
@@ -152,12 +171,14 @@ export const ToolSearchTool = Tool.define<typeof parameters, Metadata, never>(
           if (required.length === 0) return true
           const parsed = parseToolName(name)
           const desc = (deferred[name]?.description ?? "").toLowerCase()
+          const hint = (deferred[name]?.searchHint ?? "").toLowerCase()
           return required.every((term) => {
             const pat = patterns.get(term)!
             return (
               parsed.parts.includes(term) ||
               parsed.parts.some((part) => part.includes(term)) ||
-              pat.test(desc)
+              pat.test(desc) ||
+              pat.test(hint)
             )
           })
         })
@@ -165,12 +186,14 @@ export const ToolSearchTool = Tool.define<typeof parameters, Metadata, never>(
         const scored = candidateNames.map((name) => {
           const parsed = parseToolName(name)
           const desc = (deferred[name]?.description ?? "").toLowerCase()
+          const hint = (deferred[name]?.searchHint ?? "").toLowerCase()
           let score = 0
           for (const term of all) {
             const pat = patterns.get(term)!
             if (parsed.parts.includes(term)) score += parsed.isMcp ? 12 : 10
             else if (parsed.parts.some((part) => part.includes(term))) score += parsed.isMcp ? 6 : 5
             else if (parsed.full.includes(term)) score += 3
+            if (pat.test(hint)) score += 4
             if (pat.test(desc)) score += 2
           }
           return { name, score }
@@ -186,6 +209,7 @@ export const ToolSearchTool = Tool.define<typeof parameters, Metadata, never>(
           title: `toolsearch: keyword → ${matches.length}`,
           output: renderFunctions(matches, deferred),
           metadata: { query: input.query, matches, total_deferred: totalDeferred },
+          ...(isAnthropicModel(ctx.extra?.model) && matches.length > 0 ? { content: toolReferences(matches) } : {}),
         }
       }),
   } satisfies Tool.DefWithoutID<typeof parameters, Metadata>),

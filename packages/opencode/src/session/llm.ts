@@ -29,6 +29,31 @@ const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
 type Result = Awaited<ReturnType<typeof streamText>>
 
+function supportsAnthropicDeferredLoading(model: Provider.Model) {
+  return (
+    model.api.npm === "@ai-sdk/anthropic" ||
+    model.api.npm === "@ai-sdk/google-vertex/anthropic" ||
+    (model.api.npm === "@ai-sdk/amazon-bedrock" && model.api.id.includes("anthropic"))
+  )
+}
+
+function usesAnthropicDeferredLoading(tools: Record<string, Tool>) {
+  return Object.values(tools).some(
+    (tool) => (tool as Tool & { providerOptions?: Record<string, any> }).providerOptions?.anthropic?.deferLoading,
+  )
+}
+
+function appendBetaHeader(value: string | undefined, beta: string) {
+  const betas = new Set(
+    (value ?? "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+  )
+  betas.add(beta)
+  return Array.from(betas).join(",")
+}
+
 export type StreamInput = {
   user: MessageV2.User
   sessionID: string
@@ -194,7 +219,7 @@ const live: Layer.Layer<
       )
 
       const tools = resolveTools(input)
-
+      const anthropicDeferred = supportsAnthropicDeferredLoading(input.model) && usesAnthropicDeferredLoading(tools)
       // LiteLLM and some Anthropic proxies require the tools parameter to be present
       // when message history contains tool calls, even if no tools are being used.
       // Add a dummy tool that is never called to satisfy this validation.
@@ -379,6 +404,14 @@ const live: Layer.Layer<
                 ...(input.parentSessionID ? { "x-parent-session-id": input.parentSessionID } : {}),
                 "User-Agent": `opencode/${InstallationVersion}`,
               }),
+          ...(anthropicDeferred
+            ? {
+                "anthropic-beta": appendBetaHeader(
+                  input.model.headers?.["anthropic-beta"] ?? (headers as Record<string, string | undefined>)["anthropic-beta"],
+                  input.model.api.npm === "@ai-sdk/anthropic" ? "advanced-tool-use-2025-11-20" : "tool-search-tool-2025-10-19",
+                ),
+              }
+            : {}),
           ...input.model.headers,
           ...headers,
         },

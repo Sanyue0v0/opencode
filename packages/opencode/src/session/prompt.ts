@@ -365,6 +365,20 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const tools: Record<string, AITool> = {}
       const run = yield* runner()
       const promptOps = yield* ops()
+      const useAnthropicDeferredLoading =
+        input.model.api.npm === "@ai-sdk/anthropic" ||
+        input.model.api.npm === "@ai-sdk/google-vertex/anthropic" ||
+        (input.model.api.npm === "@ai-sdk/amazon-bedrock" && input.model.api.id.includes("anthropic"))
+      const withAnthropicDeferredLoading = <T extends AITool>(tool: T) =>
+        Object.assign(tool, {
+          providerOptions: {
+            ...(tool.providerOptions ?? {}),
+            anthropic: {
+              ...(tool.providerOptions?.anthropic ?? {}),
+              deferLoading: true,
+            },
+          },
+        })
 
       const toolSearchEnabled = !Flag.OPENCODE_DISABLE_TOOL_SEARCH
       const discovered = new Set<string>()
@@ -373,7 +387,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           if (message.info.role !== "assistant") continue
           for (const part of message.parts) {
             if (part.type !== "tool" || part.tool !== "toolsearch" || part.state.status !== "completed") continue
-            const matches = (part.state.metadata as { matches?: unknown } | undefined)?.matches
+            const matches =
+              Array.isArray(part.state.content) && part.state.content.every((item) => item.type === "tool_reference")
+                ? part.state.content.map((item) => item.toolName)
+                : (part.state.metadata as { matches?: unknown } | undefined)?.matches
             if (!Array.isArray(matches)) continue
             for (const name of matches) {
               if (typeof name === "string") discovered.add(name)
@@ -383,10 +400,29 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }
 
       const deferredTools: Record<string, DeferredToolEntry> = {}
-      const defer = (id: string, description: string, parameters: unknown) => {
-        deferredTools[id] = { description, parameters }
+      const defer = (id: string, description: string, parameters: unknown, searchHint?: string) => {
+        deferredTools[id] = { description, parameters, searchHint }
       }
-      const shouldDefer = (id: string) => toolSearchEnabled && !discovered.has(id)
+      const isDiscovered = (id: string) => discovered.has(id)
+      const shouldDeferTool = (tool: Tool.Def & { source: "builtin" | "custom" }) => {
+        if (!toolSearchEnabled) return false
+        if (isDiscovered(tool.id)) return false
+        if (tool.id === "toolsearch") return false
+        if (tool.alwaysLoad === true) return false
+        return tool.shouldDefer === true
+      }
+      const shouldDeferMcpTool = (
+        id: string,
+        tool: {
+          shouldDefer?: boolean
+          alwaysLoad?: boolean
+        },
+      ) => {
+        if (!toolSearchEnabled) return false
+        if (isDiscovered(id)) return false
+        if (tool.alwaysLoad === true) return false
+        return tool.shouldDefer !== false
+      }
 
       const context = (args: any, options: ToolExecutionOptions): Tool.Context => ({
         sessionID: input.session.id,
@@ -433,13 +469,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       })) {
         if (item.id === "toolsearch" && !toolSearchEnabled) continue
         const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
-        if (item.source === "custom" && shouldDefer(item.id)) {
-          defer(item.id, item.description, schema)
-          continue
-        }
-        tools[item.id] = tool({
+        const runtimeTool = tool({
           description: item.description,
           inputSchema: jsonSchema(schema),
+          providerOptions: item.providerOptions,
           execute(args, options) {
             return run.promise(
               Effect.gen(function* () {
@@ -472,6 +505,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             )
           },
         })
+        if (shouldDeferTool(item)) {
+          defer(item.id, item.description, schema, item.searchHint)
+          if (useAnthropicDeferredLoading) {
+            tools[item.id] = withAnthropicDeferredLoading(runtimeTool)
+          }
+          continue
+        }
+        tools[item.id] = runtimeTool
       }
 
       for (const [key, item] of Object.entries(yield* mcp.tools())) {
@@ -480,8 +521,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
         const schema = yield* Effect.promise(() => Promise.resolve(asSchema(item.inputSchema).jsonSchema))
         const transformed = ProviderTransform.schema(input.model, schema)
-        if (shouldDefer(key)) {
-          defer(key, item.description ?? "", transformed)
+        if (shouldDeferMcpTool(key, item)) {
+          defer(key, item.description ?? "", transformed, item.searchHint)
+          if (useAnthropicDeferredLoading) {
+            tools[key] = withAnthropicDeferredLoading(item)
+          }
           continue
         }
         item.inputSchema = jsonSchema(transformed)
@@ -641,7 +685,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             Effect.gen(function* () {
               part = yield* sessions.updatePart({
                 ...part,
-                type: "tool",
                 state: { ...part.state, ...val },
               } satisfies MessageV2.ToolPart)
             }),

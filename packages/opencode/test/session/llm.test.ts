@@ -1172,6 +1172,117 @@ describe("session.llm.stream", () => {
     })
   })
 
+  test("adds anthropic defer_loading and beta header for internally deferred tools", async () => {
+    const server = state.server
+    if (!server) throw new Error("Server not initialized")
+
+    const source = await loadFixture("anthropic", "claude-opus-4-6")
+    const model = source.model
+    const chunks = [
+      {
+        type: "message_start",
+        message: {
+          id: "msg-deferred-tools",
+          model: model.id,
+          usage: { input_tokens: 3, cache_creation_input_tokens: null, cache_read_input_tokens: null },
+        },
+      },
+      { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "ok" } },
+      { type: "content_block_stop", index: 0 },
+      {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn", stop_sequence: null, container: null },
+        usage: { input_tokens: 3, output_tokens: 2, cache_creation_input_tokens: null, cache_read_input_tokens: null },
+      },
+      { type: "message_stop" },
+    ]
+    const request = waitRequest("/messages", createEventResponse(chunks))
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            enabled_providers: ["anthropic"],
+            provider: {
+              anthropic: {
+                name: "Anthropic",
+                env: ["ANTHROPIC_API_KEY"],
+                npm: "@ai-sdk/anthropic",
+                api: "https://api.anthropic.com/v1",
+                models: { [model.id]: model },
+                options: { apiKey: "test-anthropic-key", baseURL: `${server.url.origin}/v1` },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await getModel(ProviderID.make("anthropic"), ModelID.make(model.id))
+        const sessionID = SessionID.make("session-test-anthropic-deferred")
+        const agent = {
+          name: "test",
+          mode: "primary",
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+        const user = {
+          id: MessageID.make("user-anthropic-deferred"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.make("anthropic"), modelID: resolved.id, variant: "max" },
+        } satisfies MessageV2.User
+
+        const immediate = tool({
+          description: "Immediate tool",
+          inputSchema: z.object({ query: z.string() }),
+          execute: async () => ({ output: "ok" }),
+        })
+        const deferred = Object.assign(
+          tool({
+            description: "Deferred tool",
+            inputSchema: z.object({ query: z.string() }),
+            providerOptions: { anthropic: { deferLoading: true } },
+            execute: async () => ({ output: "ok" }),
+          }),
+        )
+
+        await drain({
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          system: ["You are a helpful assistant."],
+          messages: [{ role: "user", content: "Hello" }],
+          tools: {
+            toolsearch: immediate,
+            deferred_tool: deferred,
+          },
+        })
+
+        const capture = await request
+        const body = capture.body
+        const headers = capture.headers
+        const beta = headers.get("anthropic-beta")
+        const tools = body.tools as Array<Record<string, unknown>>
+        const deferredTool = tools.find((item) => item.name === "deferred_tool")
+        const toolSearch = tools.find((item) => item.name === "toolsearch")
+
+        expect(beta?.includes("advanced-tool-use-2025-11-20")).toBe(true)
+        expect(deferredTool?.defer_loading).toBe(true)
+        expect(toolSearch?.defer_loading).toBeUndefined()
+      },
+    })
+  })
+
   test("sends Google API payload for Gemini models", async () => {
     const server = state.server
     if (!server) {

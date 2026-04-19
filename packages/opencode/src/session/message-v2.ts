@@ -297,6 +297,16 @@ export const ToolStateRunning = z
   })
 export type ToolStateRunning = z.infer<typeof ToolStateRunning>
 
+export const ToolReferenceContent = z
+  .object({
+    type: z.literal("tool_reference"),
+    toolName: z.string(),
+  })
+  .meta({
+    ref: "ToolReferenceContent",
+  })
+export type ToolReferenceContent = z.infer<typeof ToolReferenceContent>
+
 export const ToolStateCompleted = z
   .object({
     status: z.literal("completed"),
@@ -304,6 +314,7 @@ export const ToolStateCompleted = z
     output: z.string(),
     title: z.string(),
     metadata: z.record(z.string(), z.any()),
+    content: ToolReferenceContent.array().optional(),
     time: z.object({
       start: z.number(),
       end: z.number(),
@@ -576,6 +587,38 @@ function providerMeta(metadata: Record<string, any> | undefined) {
   return Object.keys(rest).length > 0 ? rest : undefined
 }
 
+function anthropicToolReferenceOutput(model: Provider.Model, part: ToolPart) {
+  if (!(model.api.npm === "@ai-sdk/anthropic" || model.api.npm === "@ai-sdk/google-vertex/anthropic")) return
+  if (part.tool !== "toolsearch") return
+  if (part.state.status !== "completed") return
+  const matchesFromContent = Array.isArray(part.state.content)
+    ? part.state.content.map((item) => item.toolName)
+    : undefined
+  const matches =
+    matchesFromContent && matchesFromContent.length > 0
+      ? matchesFromContent
+      : Array.isArray(part.state.metadata.matches) && part.state.metadata.matches.every((item) => typeof item === "string")
+        ? (part.state.metadata.matches as string[])
+        : undefined
+  if (!matches || matches.length === 0) return
+  return {
+    type: "content",
+    value: [
+      { type: "text", text: part.state.output },
+      ...matches.map((toolName) => ({
+        type: "custom",
+        value: {},
+        providerOptions: {
+          anthropic: {
+            type: "tool-reference",
+            toolName,
+          },
+        },
+      })),
+    ],
+  } as const
+}
+
 export const toModelMessagesEffect = Effect.fnUntraced(function* (
   input: WithParts[],
   model: Provider.Model,
@@ -611,6 +654,14 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
     }
 
     if (typeof output === "object") {
+      const contentOutput = output as {
+        type?: string
+        value?: unknown
+      }
+      if (contentOutput.type === "content" && Array.isArray(contentOutput.value)) {
+        return contentOutput
+      }
+
       const outputObject = output as {
         text: string
         attachments?: Array<{ mime: string; url: string }>
@@ -731,12 +782,13 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
             const finalAttachments = supportsMediaInToolResults ? attachments : nonMediaAttachments
 
             const output =
-              finalAttachments.length > 0
+              anthropicToolReferenceOutput(model, part) ??
+              (finalAttachments.length > 0
                 ? {
                     text: outputText,
                     attachments: finalAttachments,
                   }
-                : outputText
+                : outputText)
 
             assistantMessage.parts.push({
               type: ("tool-" + part.tool) as `tool-${string}`,

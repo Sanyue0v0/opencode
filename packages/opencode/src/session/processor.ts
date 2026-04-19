@@ -24,6 +24,22 @@ import { isRecord } from "@/util/record"
 const DOOM_LOOP_THRESHOLD = 3
 const log = Log.create({ service: "session.processor" })
 
+function anthropicToolReferences(output: unknown) {
+  if (!Array.isArray(output)) return
+  const refs = output
+    .map((item) =>
+      isRecord(item) && item.type === "tool_reference" && typeof item.toolName === "string" ? item.toolName : undefined,
+    )
+    .filter((item): item is string => Boolean(item))
+  if (refs.length !== output.length) return
+  return refs
+}
+
+function formatToolReferences(matches: string[]) {
+  if (matches.length === 0) return "No tool references returned."
+  return ["Matched deferred tools:", ...matches.map((name) => `- ${name}`)].join("\n")
+}
+
 export type Result = "compact" | "stop" | "continue"
 
 export type Event = LLM.Event
@@ -174,6 +190,7 @@ export const layer: Layer.Layer<
           title: string
           metadata: Record<string, any>
           output: string
+          content?: MessageV2.ToolReferenceContent[]
           attachments?: MessageV2.FilePart[]
         },
       ) {
@@ -186,6 +203,7 @@ export const layer: Layer.Layer<
             input: match.part.state.input,
             output: output.output,
             metadata: output.metadata,
+            content: output.content,
             title: output.title,
             time: { start: match.part.state.time.start, end: Date.now() },
             attachments: output.attachments,
@@ -331,6 +349,20 @@ export const layer: Layer.Layer<
           }
 
           case "tool-result": {
+            const matches = anthropicToolReferences(value.output)
+            if (matches) {
+              yield* completeToolCall(value.toolCallId, {
+                title: value.title ?? value.toolName,
+                metadata: {
+                  ...(isRecord(value.providerMetadata) ? value.providerMetadata : {}),
+                  matches,
+                  nativeToolSearch: true,
+                },
+                output: formatToolReferences(matches),
+                content: matches.map((toolName) => ({ type: "tool_reference", toolName })),
+              })
+              return
+            }
             yield* completeToolCall(value.toolCallId, value.output)
             return
           }

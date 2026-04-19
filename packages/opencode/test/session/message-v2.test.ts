@@ -443,6 +443,95 @@ describe("session.message-v2.toModelMessage", () => {
     })
   })
 
+  test("replays provider-executed toolsearch matches as anthropic tool references", async () => {
+    const anthropicModel: Provider.Model = {
+      ...model,
+      id: ModelID.make("anthropic/claude-opus-4-7"),
+      providerID: ProviderID.make("anthropic"),
+      api: {
+        id: "claude-opus-4-7-20250805",
+        url: "https://api.anthropic.com",
+        npm: "@ai-sdk/anthropic",
+      },
+    }
+    const userID = "m-user-toolsearch"
+    const assistantID = "m-assistant-toolsearch"
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [{ ...basePart(userID, "u-toolsearch"), type: "text", text: "find tools" }] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a-toolsearch"),
+            type: "tool",
+            callID: "call-toolsearch-1",
+            tool: "toolsearch",
+            state: {
+              status: "completed",
+              input: { query: "skill" },
+              output: "Matched deferred tools:\n- skill\n- task",
+              title: "toolsearch",
+              metadata: { matches: ["skill", "task"], nativeToolSearch: true },
+              content: [
+                { type: "tool_reference", toolName: "skill" },
+                { type: "tool_reference", toolName: "task" },
+              ],
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    const result = await MessageV2.toModelMessages(input, anthropicModel)
+
+    expect(result[0]).toStrictEqual({
+      role: "user",
+      content: [{ type: "text", text: "find tools" }],
+    })
+
+    const assistant = result.find((msg) => msg.role === "assistant")
+    expect(assistant).toBeDefined()
+    const assistantContent = Array.isArray(assistant?.content) ? assistant.content : []
+    const toolCall = assistantContent.find((part) => part.type === "tool-call")
+    const allContent = result.flatMap((msg) =>
+      Array.isArray(msg.content) ? (msg.content as Array<{ type: string } & Record<string, any>>) : [],
+    )
+    const toolResult = allContent.find((part) => part.type === "tool-result")
+
+    expect(toolCall).toMatchObject({
+      type: "tool-call",
+      toolCallId: "call-toolsearch-1",
+      toolName: "toolsearch",
+      input: { query: "skill" },
+    })
+
+    expect(toolResult).toMatchObject({
+      type: "tool-result",
+      toolCallId: "call-toolsearch-1",
+      toolName: "toolsearch",
+      output: {
+        type: "content",
+        value: [
+          { type: "text", text: "Matched deferred tools:\n- skill\n- task" },
+          {
+            type: "custom",
+            value: {},
+            providerOptions: { anthropic: { type: "tool-reference", toolName: "skill" } },
+          },
+          {
+            type: "custom",
+            value: {},
+            providerOptions: { anthropic: { type: "tool-reference", toolName: "task" } },
+          },
+        ],
+      },
+    })
+  })
+
   test("omits provider metadata when assistant model differs", async () => {
     const userID = "m-user"
     const assistantID = "m-assistant"

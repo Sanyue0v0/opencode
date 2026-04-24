@@ -1,7 +1,3 @@
-import { AppRuntime } from "@/effect/app-runtime"
-import { InstanceBootstrap } from "../project/bootstrap"
-import { Instance } from "../project/instance"
-
 const informationalArgs = new Set(["-h", "--help", "-v", "--version"])
 
 export function shouldSkipCLIInit(args: string[]) {
@@ -9,6 +5,10 @@ export function shouldSkipCLIInit(args: string[]) {
 }
 
 export async function bootstrap<T>(directory: string, cb: () => Promise<T>) {
+  const { AppRuntime } = await import("@/effect/app-runtime")
+  const { InstanceBootstrap } = await import("../project/bootstrap")
+  const { Instance } = await import("../project/instance")
+
   return Instance.provide({
     directory,
     init: () => AppRuntime.runPromise(InstanceBootstrap),

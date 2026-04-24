@@ -37,6 +37,7 @@ if (shouldSkipCLIInit(args)) {
   } else {
     await cli.parse()
   }
+  process.exit(0)
 } else {
   const { runCLI } = await import("./cli/main")
   await runCLI(args)

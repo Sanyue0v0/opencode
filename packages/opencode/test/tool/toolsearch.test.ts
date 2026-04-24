@@ -22,6 +22,7 @@ const mockTruncate = {
   cleanup: () => Effect.void,
   write: () => Effect.succeed("/tmp/tool-output"),
   output: (text: string) => Effect.succeed({ content: text, truncated: false as const }),
+  limits: () => Effect.succeed({ maxLines: 2000, maxBytes: 50 * 1024 }),
 }
 
 describe("tool.toolsearch", () => {

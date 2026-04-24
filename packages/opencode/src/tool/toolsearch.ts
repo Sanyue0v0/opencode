@@ -1,16 +1,20 @@
-import z from "zod"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import * as Tool from "./tool"
 import type { MessageV2 } from "../session/message-v2"
+import { zod } from "@/util/effect-zod"
+import { PositiveInt, withStatics } from "@/util/schema"
 
-const parameters = z.object({
-  query: z
-    .string()
-    .describe(
+export const Parameters = Schema.Struct({
+  query: Schema.String.annotate({
+    description:
       'Query to find deferred tools. Use "select:<tool_name>" (comma-separated "select:A,B,C" for multi-select) for direct selection, or keywords to search.',
-    ),
-  max_results: z.number().int().positive().optional().describe("Maximum number of results (default: 5)"),
+  }),
+  max_results: Schema.optional(PositiveInt).annotate({
+    description: "Maximum number of results (default: 5)",
+  }),
 })
+  .annotate({ identifier: "ToolSearchParameters" })
+  .pipe(withStatics((s) => ({ zod: zod(s) })))
 
 type Metadata = {
   query: string
@@ -94,14 +98,14 @@ function renderFunctions(matches: string[], deferred: Record<string, DeferredToo
   ].join("\n")
 }
 
-export const ToolSearchTool = Tool.define<typeof parameters, Metadata, never>(
+export const ToolSearchTool = Tool.define<typeof Parameters, Metadata, never>(
   "toolsearch",
   Effect.succeed({
     description: DESCRIPTION,
-    parameters,
+    parameters: Parameters,
     alwaysLoad: true,
     searchHint: "load deferred tool schemas",
-    execute: (input: z.infer<typeof parameters>, ctx: Tool.Context<Metadata>) =>
+    execute: (input: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context<Metadata>) =>
       Effect.gen(function* () {
         const max = input.max_results ?? 5
         const deferred = (ctx.extra?.[TOOLSEARCH_EXTRA_KEY] ?? {}) as Record<string, DeferredToolEntry>
@@ -119,7 +123,7 @@ export const ToolSearchTool = Tool.define<typeof parameters, Metadata, never>(
         if (selectMatch) {
           const requested = selectMatch[1]!
             .split(",")
-            .map((s) => s.trim())
+            .map((s: string) => s.trim())
             .filter(Boolean)
           const found: string[] = []
           for (const req of requested) {
@@ -212,5 +216,5 @@ export const ToolSearchTool = Tool.define<typeof parameters, Metadata, never>(
           ...(isAnthropicModel(ctx.extra?.model) && matches.length > 0 ? { content: toolReferences(matches) } : {}),
         }
       }),
-  } satisfies Tool.DefWithoutID<typeof parameters, Metadata>),
+  } satisfies Tool.DefWithoutID<typeof Parameters, Metadata>),
 )

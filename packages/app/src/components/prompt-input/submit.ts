@@ -106,7 +106,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
   const messageID = input.messageID ?? Identifier.ascending("message")
   const { requestParts, optimisticParts } = buildRequestParts({
     prompt: input.draft.prompt,
-    context: input.draft.context,
+    context: input.draft.context ?? [],
     images,
     text,
     sessionID: input.draft.sessionID,

@@ -1607,7 +1607,7 @@ export default function Page() {
     setFollowup("edit", sessionID, {
       id: item.id,
       prompt: item.prompt,
-      context: item.context,
+      context: item.context ?? [],
     })
   }
 

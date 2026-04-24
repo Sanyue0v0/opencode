@@ -1003,7 +1003,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
           prompt.context.remove(item.key)
         }
 
-        for (const item of edit.context) {
+        for (const item of edit.context ?? []) {
           prompt.context.add({
             type: item.type,
             path: item.path,

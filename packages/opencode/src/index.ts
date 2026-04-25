@@ -1,16 +1,16 @@
-import yargs from "yargs"
-import { hideBin } from "yargs/helpers"
 import { EOL } from "os"
-import { UI } from "./cli/ui"
-import { InstallationVersion } from "./installation/version"
-import { shouldSkipCLIInit } from "./cli/bootstrap"
 
-const args = hideBin(process.argv)
+const informationalArgs = new Set(["-h", "--help", "-v", "--version"])
+const args = process.argv.slice(2)
 
-function show(out: string) {
+function shouldSkipCLIInit(args: string[]) {
+  return args.some((arg) => informationalArgs.has(arg))
+}
+
+function show(out: string, logo?: string) {
   const text = out.trimStart()
   if (!text.startsWith("opencode ")) {
-    process.stderr.write(UI.logo() + EOL + EOL)
+    if (logo) process.stderr.write(logo + EOL + EOL)
     process.stderr.write(text)
     return
   }
@@ -18,6 +18,12 @@ function show(out: string) {
 }
 
 if (shouldSkipCLIInit(args)) {
+  const [{ default: yargs }, { InstallationVersion }, { UI }] = await Promise.all([
+    import("yargs"),
+    import("./installation/version"),
+    import("./cli/ui"),
+  ])
+  const logo = UI.logo()
   const cli = yargs(args)
     .parserConfiguration({ "populate--": true })
     .scriptName("opencode")
@@ -32,13 +38,13 @@ if (shouldSkipCLIInit(args)) {
     await cli.parse(args, (err: Error | undefined, _argv: unknown, out: string) => {
       if (err) throw err
       if (!out) return
-      show(out)
+      show(out, logo)
     })
   } else {
     await cli.parse()
   }
   process.exit(0)
-} else {
-  const { runCLI } = await import("./cli/main")
-  await runCLI(args)
 }
+
+const { runCLI } = await import("./cli/main")
+await runCLI(args)
